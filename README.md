@@ -91,6 +91,8 @@ See [.env.example](./.env.example). Important values:
 | `COOKIE_SECURE` | Set true for HTTPS production |
 | `COOKIE_SAME_SITE` | `lax`, `strict`, or `none`; `none` requires secure cookies |
 | `VITE_API_BASE` | Optional API origin/base for separately hosted frontend (must end in `/api`) |
+| `ADMIN_EMAIL` / `ADMIN_PASSWORD` | Optional one-time production admin bootstrap; both must be set together. The password must be at least 12 characters and is not changed on later restarts. |
+| `AUTHOR_EMAIL` / `AUTHOR_PASSWORD` | Optional one-time bootstrap for a single author in the supplied dataset; both must be set together. Use the private account provisioner for distinct passwords across every author. |
 
 The first application start runs idempotent additive SQLite schema migrations and imports the dataset. Back up `bookleaf.db` before upgrading an existing deployment. Use `npm run seed` to repeat the import explicitly.
 
@@ -107,6 +109,7 @@ Do not commit `.env`, API keys, production credentials, or the local SQLite data
 ```powershell
 npm run dev       # Vite and Express development servers
 npm run seed      # Idempotently seed the provided dataset and local demo accounts
+npm run provision:accounts # Generate separate production login passwords in a private one-time file
 npm test          # Vitest API integration tests
 npm run lint      # Frontend and server TypeScript checks
 npm run build     # Vite frontend and compiled Express backend
@@ -150,8 +153,20 @@ Deployment target: Vercel for the static frontend and Render for the Express API
 3. In Vercel, import the same private repository, use `npm run build:client` as the build command and `dist` as the output directory, and set `VITE_API_BASE` to `https://<render-service-host>/api`.
 4. Confirm Render has `COOKIE_SECURE=true`, `COOKIE_SAME_SITE=none`, and the generated `SESSION_SECRET`. Deploy both services, then check `https://<render-service-host>/health` and exercise sign-in, ticket creation, admin reply, and author-visible polling over HTTPS.
 
-The project is prepared for this deployment shape but no provider credentials or live deployment were available, so no deployed URL or successful hosted smoke test is claimed.
+The project is prepared for this deployment shape. Production demo accounts remain disabled by default; provision distinct accounts through the operator-only procedure below after deployment.
 
-This workspace has no Git metadata, so its private-remote visibility cannot be verified. No provider credentials or verified hosted deployment were available. SQLite sessions and data fit a single-instance demonstration/deployment; use a managed relational database and a shared session store before horizontal scaling. Demo accounts are intentionally disabled in production, so production account provisioning must be supplied by the deployment/operator. File selection is a local preview only; files are not uploaded or stored. Near-real-time updates use authenticated polling rather than SSE/WebSockets.
+### Provision separate production passwords
+
+Production demo accounts stay disabled. After deploying a build that includes `provision:accounts`, open the Render service's private Shell and run:
+
+```sh
+npm run provision:accounts
+```
+
+The command seeds/updates the source records, creates a different cryptographically random password for every active author and `admin@bookleaf.local`, and stores only bcrypt hashes in the database. It writes the one-time plaintext credentials to an owner-only file under the system temporary directory and prints that file's path. In the same private Render Shell, inspect that exact path with `cat '<printed-path>'`, securely deliver each password only to its corresponding person, then remove the file with `rm -- '<printed-path>'`. Do not paste the contents into chat, commit them, or leave the file around.
+
+The generated account list contains author emails already shown in this README and the admin email configured by `ADMIN_EMAIL` (or `admin@bookleaf.local` when unset). If one-time `ADMIN_*`/`AUTHOR_*` bootstrap variables have already created active accounts, use `npm run provision:accounts -- --reset-existing` to replace them with a separate generated password for every seeded author and the admin. Running without the flag refuses to replace any active accounts. The reset command creates a new credential file. This tool does not email users or implement self-service password reset.
+
+SQLite sessions and data fit a single-instance demonstration/deployment; use a managed relational database and a shared session store before horizontal scaling. File selection is a local preview only; files are not uploaded or stored. Near-real-time updates use authenticated polling rather than SSE/WebSockets.
 
 See [architecture notes](./docs/architecture.md) and [brief assignment write-up](./docs/assignment-brief.md) for additional decisions and trade-offs.

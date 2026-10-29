@@ -420,32 +420,63 @@ export function seedSampleData() {
   }
 
   // Operator-provisioned accounts (for production, where demo accounts are disabled).
-  // Set ADMIN_EMAIL + ADMIN_PASSWORD (and optionally AUTHOR_EMAIL + AUTHOR_PASSWORD) as environment variables.
+  // These values bootstrap an account once; they never replace an existing password.
   if (!config.enableDemoAccounts) {
     const provisionAdminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
     const provisionAdminPassword = process.env.ADMIN_PASSWORD || '';
+    if (Boolean(provisionAdminEmail) !== Boolean(provisionAdminPassword)) {
+      throw new Error('Set both ADMIN_EMAIL and ADMIN_PASSWORD to bootstrap the production admin account.');
+    }
     if (provisionAdminEmail && provisionAdminPassword) {
       if (provisionAdminPassword.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters.');
-      db.prepare(`
-        INSERT INTO users (id, email, password_hash, name, role, author_id, is_active)
-        VALUES ('user_admin_provisioned', ?, ?, 'BookLeaf Admin', 'admin', NULL, 1)
-        ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, role = 'admin', is_active = 1
-      `).run(provisionAdminEmail, bcrypt.hashSync(provisionAdminPassword, 10));
+      if (authors.some((author) => author.email.trim().toLowerCase() === provisionAdminEmail)) {
+        throw new Error('ADMIN_EMAIL must not match an author email.');
+      }
+      const existingAdmin = db.prepare('SELECT role, is_active FROM users WHERE email = ?').get(provisionAdminEmail) as
+        { role: string; is_active: number } | undefined;
+      if (existingAdmin && (existingAdmin.role !== 'admin' || !existingAdmin.is_active)) {
+        throw new Error('ADMIN_EMAIL is already used by an inactive or non-admin account.');
+      }
+      if (!existingAdmin) {
+        db.prepare(`
+          INSERT INTO users (id, email, password_hash, name, role, author_id, is_active)
+          VALUES ('user_admin_provisioned', ?, ?, 'BookLeaf Admin', 'admin', NULL, 1)
+          ON CONFLICT(email) DO NOTHING
+        `).run(provisionAdminEmail, bcrypt.hashSync(provisionAdminPassword, 12));
+      }
     }
 
     const provisionAuthorEmail = (process.env.AUTHOR_EMAIL || '').trim().toLowerCase();
     const provisionAuthorPassword = process.env.AUTHOR_PASSWORD || '';
+    if (Boolean(provisionAuthorEmail) !== Boolean(provisionAuthorPassword)) {
+      throw new Error('Set both AUTHOR_EMAIL and AUTHOR_PASSWORD to bootstrap an author account.');
+    }
     if (provisionAuthorEmail && provisionAuthorPassword) {
       if (provisionAuthorPassword.length < 12) throw new Error('AUTHOR_PASSWORD must be at least 12 characters.');
       const match = authors.find((author) => author.email.trim().toLowerCase() === provisionAuthorEmail);
       if (!match) throw new Error('AUTHOR_EMAIL does not match any author in the dataset.');
-      userInsert.run({
-        id: `user_${match.externalId}`,
-        email: provisionAuthorEmail,
-        password_hash: bcrypt.hashSync(provisionAuthorPassword, 10),
-        name: match.name,
-        author_id: authorIdByExternalId.get(match.externalId),
-      });
+      if (provisionAuthorEmail === provisionAdminEmail) {
+        throw new Error('AUTHOR_EMAIL and ADMIN_EMAIL must be different.');
+      }
+      const authorId = authorIdByExternalId.get(match.externalId);
+      const existingAuthor = db.prepare('SELECT role, author_id, is_active FROM users WHERE email = ?').get(provisionAuthorEmail) as
+        { role: string; author_id: string | null; is_active: number } | undefined;
+      if (existingAuthor && (existingAuthor.role !== 'author' || existingAuthor.author_id !== authorId || !existingAuthor.is_active)) {
+        throw new Error('AUTHOR_EMAIL is already used by an inactive account or a different account.');
+      }
+      if (!existingAuthor) {
+        db.prepare(`
+          INSERT INTO users (id, email, password_hash, name, role, author_id, is_active)
+          VALUES (?, ?, ?, ?, 'author', ?, 1)
+          ON CONFLICT(email) DO NOTHING
+        `).run(
+          `user_${match.externalId}`,
+          provisionAuthorEmail,
+          bcrypt.hashSync(provisionAuthorPassword, 12),
+          match.name,
+          authorId,
+        );
+      }
     }
   }
 
