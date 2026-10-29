@@ -47,6 +47,20 @@ describe('production account provisioning', () => {
     const hashesBeforeRefusal = database.prepare('SELECT email, password_hash FROM users ORDER BY email').all();
     expect(() => provisionAccounts(database!)).toThrow('--reset-existing');
     expect(database.prepare('SELECT email, password_hash FROM users ORDER BY email').all()).toEqual(hashesBeforeRefusal);
+
+    const replacementPasswords = [
+      'replacement-author-password-00001',
+      'replacement-author-password-00003',
+      'replacement-admin-password-000001',
+    ];
+    const replacements = provisionAccounts(database, true, () => replacementPasswords.shift() ?? '');
+    expect(new Set(replacements.map((account) => account.password)).size).toBe(3);
+    for (const account of replacements) {
+      expect(account.password).not.toBe(accounts.find((previous) => previous.email === account.email)?.password);
+      const saved = database.prepare('SELECT password_hash FROM users WHERE email = ?')
+        .get(account.email) as { password_hash: string };
+      expect(bcrypt.compareSync(account.password, saved.password_hash)).toBe(true);
+    }
   }, 30_000);
 
   it('requires active authors and distinct long passwords before writing accounts', () => {
