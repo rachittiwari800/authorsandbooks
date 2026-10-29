@@ -419,6 +419,36 @@ export function seedSampleData() {
     `).run(passwordHash);
   }
 
+  // Operator-provisioned accounts (for production, where demo accounts are disabled).
+  // Set ADMIN_EMAIL + ADMIN_PASSWORD (and optionally AUTHOR_EMAIL + AUTHOR_PASSWORD) as environment variables.
+  if (!config.enableDemoAccounts) {
+    const provisionAdminEmail = (process.env.ADMIN_EMAIL || '').trim().toLowerCase();
+    const provisionAdminPassword = process.env.ADMIN_PASSWORD || '';
+    if (provisionAdminEmail && provisionAdminPassword) {
+      if (provisionAdminPassword.length < 12) throw new Error('ADMIN_PASSWORD must be at least 12 characters.');
+      db.prepare(`
+        INSERT INTO users (id, email, password_hash, name, role, author_id, is_active)
+        VALUES ('user_admin_provisioned', ?, ?, 'BookLeaf Admin', 'admin', NULL, 1)
+        ON CONFLICT(email) DO UPDATE SET password_hash = excluded.password_hash, role = 'admin', is_active = 1
+      `).run(provisionAdminEmail, bcrypt.hashSync(provisionAdminPassword, 10));
+    }
+
+    const provisionAuthorEmail = (process.env.AUTHOR_EMAIL || '').trim().toLowerCase();
+    const provisionAuthorPassword = process.env.AUTHOR_PASSWORD || '';
+    if (provisionAuthorEmail && provisionAuthorPassword) {
+      if (provisionAuthorPassword.length < 12) throw new Error('AUTHOR_PASSWORD must be at least 12 characters.');
+      const match = authors.find((author) => author.email.trim().toLowerCase() === provisionAuthorEmail);
+      if (!match) throw new Error('AUTHOR_EMAIL does not match any author in the dataset.');
+      userInsert.run({
+        id: `user_${match.externalId}`,
+        email: provisionAuthorEmail,
+        password_hash: bcrypt.hashSync(provisionAuthorPassword, 10),
+        name: match.name,
+        author_id: authorIdByExternalId.get(match.externalId),
+      });
+    }
+  }
+
   for (const book of books) {
     const authorId = authorIdByExternalId.get(book.authorExternalId);
     if (!authorId) throw new Error(`Book ${book.externalId} references an unknown author: ${book.authorExternalId}`);
