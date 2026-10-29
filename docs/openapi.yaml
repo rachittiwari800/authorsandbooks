@@ -1,0 +1,207 @@
+openapi: 3.0.3
+info:
+  title: BookLeaf Author Support API
+  version: 1.0.0
+  description: Session-authenticated API for author books, support tickets, and admin ticket management. The ticket queue sorts unresolved tickets first, then priority (Critical, High, Medium, Low), then age (oldest first), with closed/resolved tickets following. Login, ticket creation, and AI actions are rate limited.
+servers:
+  - url: http://localhost:3001
+security:
+  - sessionCookie: []
+paths:
+  /health:
+    get:
+      security: []
+      summary: API health
+      responses:
+        '200':
+          description: Service and database are available
+  /api/auth/login:
+    post:
+      security: []
+      summary: Sign in
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [email, password]
+              properties:
+                email: { type: string, format: email }
+                password: { type: string }
+      responses:
+        '200': { description: Authenticated user and session cookie }
+        '401': { description: Invalid credentials }
+        '429': { description: Login rate limit exceeded }
+  /api/auth/logout:
+    post:
+      summary: Sign out and invalidate session
+      responses:
+        '200': { description: Session destroyed }
+  /api/auth/me:
+    get:
+      summary: Get current session user
+      responses:
+        '200': { description: Authenticated user }
+        '401': { description: Not authenticated }
+  /api/author/dashboard:
+    get:
+      summary: Author dashboard totals and books
+      responses:
+        '200': { description: Current author's database-derived metrics and books }
+        '403': { description: Author role required }
+  /api/author/books:
+    get:
+      summary: List current author's books
+      responses:
+        '200': { description: Author-owned books }
+  /api/author/tickets:
+    get:
+      summary: List current author's tickets
+      responses:
+        '200': { description: Tickets for the authenticated author }
+    post:
+      summary: Create a support ticket
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [subject, description]
+              properties:
+                subject: { type: string, maxLength: 200 }
+                description: { type: string, maxLength: 5000 }
+                bookId: { type: string, nullable: true }
+      responses:
+        '201': { description: Ticket created; AI availability and manual-review status are reported separately }
+        '400': { description: Invalid input or book not owned by author }
+        '429': { description: Ticket creation rate limit exceeded }
+  /api/author/tickets/{id}:
+    get:
+      summary: Read a ticket and public conversation
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Ticket with public messages only }
+        '404': { description: Ticket not found for this author }
+  /api/admin/dashboard:
+    get:
+      summary: Admin publishing totals and support metrics
+      responses:
+        '200': { description: Database-derived operations dashboard }
+        '403': { description: Admin role required }
+  /api/admin/tickets:
+    get:
+      summary: Search, filter, and paginate the prioritized ticket queue
+      parameters:
+        - { in: query, name: page, schema: { type: integer, minimum: 1 } }
+        - { in: query, name: pageSize, schema: { type: integer, minimum: 1, maximum: 100 } }
+        - { in: query, name: search, schema: { type: string } }
+        - { in: query, name: status, schema: { type: string, enum: [Open, In Progress, Resolved, Closed] } }
+        - in: query
+          name: category
+          schema:
+            type: string
+            enum:
+              - Royalty & Payments
+              - ISBN & Metadata Issues
+              - Printing & Quality
+              - Distribution & Availability
+              - Book Status & Production Updates
+              - General Inquiry
+        - { in: query, name: priority, schema: { type: string, enum: [Critical, High, Medium, Low] } }
+        - { in: query, name: author, schema: { type: string } }
+        - { in: query, name: assignedAdmin, schema: { type: string } }
+        - { in: query, name: createdFrom, schema: { type: string, format: date } }
+        - { in: query, name: createdTo, schema: { type: string, format: date } }
+      responses:
+        '200': { description: Filtered page of tickets }
+        '400': { description: Invalid filter, date range, or pagination value }
+  /api/admin/tickets/{id}:
+    get:
+      summary: Read an admin ticket with staff-only messages
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      responses:
+        '200': { description: Ticket, public replies, internal notes, and drafts }
+        '404': { description: Ticket not found }
+    patch:
+      summary: Update status, category, priority, or assignment
+      parameters:
+        - in: path
+          name: id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                status: { type: string, enum: [Open, In Progress, Resolved, Closed] }
+                category:
+                  type: string
+                  enum:
+                    - Royalty & Payments
+                    - ISBN & Metadata Issues
+                    - Printing & Quality
+                    - Distribution & Availability
+                    - Book Status & Production Updates
+                    - General Inquiry
+                priority: { type: string, enum: [Critical, High, Medium, Low] }
+                assignedAdminId: { type: string }
+      responses:
+        '200': { description: Persisted ticket update }
+        '400': { description: Invalid update }
+  /api/admin/tickets/{id}/assign:
+    post:
+      summary: Assign ticket to current administrator
+      responses:
+        '200': { description: Ticket assigned }
+  /api/admin/tickets/{id}/notes:
+    post:
+      summary: Add private internal note
+      responses:
+        '200': { description: Internal note stored; never exposed to authors }
+  /api/admin/tickets/{id}/replies:
+    post:
+      summary: Send a public reply to the author
+      responses:
+        '200': { description: Public reply stored and available to author polling }
+  /api/admin/tickets/{id}/draft:
+    post:
+      summary: Save an editable unsent draft
+      responses:
+        '200': { description: Staff-only draft saved }
+  /api/admin/tickets/{id}/ai/classify:
+    post:
+      summary: Re-run ticket classification
+      responses:
+        '200': { description: Recommendation and fallback/source metadata }
+        '429': { description: Global or per-ticket AI regeneration limit exceeded }
+  /api/admin/tickets/{id}/ai/priority:
+    post:
+      summary: Re-run ticket priority assessment
+      responses:
+        '200': { description: Recommendation and fallback/source metadata }
+        '429': { description: Global or per-ticket AI regeneration limit exceeded }
+  /api/admin/tickets/{id}/ai/draft:
+    post:
+      summary: Generate and persist an editable unsent draft
+      responses:
+        '200': { description: Draft and AI source metadata }
+        '429': { description: Global or per-ticket AI regeneration limit exceeded }
+components:
+  securitySchemes:
+    sessionCookie:
+      type: apiKey
+      in: cookie
+      name: connect.sid
